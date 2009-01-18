@@ -107,11 +107,7 @@ _start:
         ori             r3,r3,MSR_DR|MSR_IR
         mtsrr1  r3
 
-        # DVDX stores the address to jump
-        # to at 0x80004000.
-        # We still don't have BAT enabled,
-        # so load at the physical address.
-        lis r3, 0x8080
+        lis r3, 0x8000
         addi r3, r3, 0x4000
         mtsrr0  r3
         #isync
