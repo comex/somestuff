@@ -1,0 +1,7 @@
+main
+brute
+*.dol
+*.elf
+*.o
+*~
+maintemp.*
