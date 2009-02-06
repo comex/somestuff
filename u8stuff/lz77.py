@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import sys, struct, re
-#import psyco
-#psyco.full()
+import psyco
+psyco.full()
 # by marcan. 
 class WiiLZ77:
 		TYPE_LZ77 = 1
