@@ -1,4 +1,5 @@
 # A LOT faster than the python version, which has to allocate new strings for setslice
+# Inspired by a script that went from 22 minutes to 26 seconds by using this
 cdef extern from "Python.h":
     object PyString_FromStringAndSize(char *s, Py_ssize_t len)
     char* PyString_AsString(object string) 

@@ -7,14 +7,17 @@ elfn = {'text': 0, 'data': 0}
 
 
 class ElfSection:
-    def __init__(self, type, addr, data):
+    def __init__(self, type, addr, data, note=None):
         global strings, str_offset, elf_offset, elfn
         if type == 'bss':
-            x = '.bss\0'
+            x = '.bss'
         else:
-            x = '.%s.%02x\0' % (type, elfn[type])
+            x = '.%s.%02x' % (type, elfn[type])
             elfn[type] += 1
+        if note is not None: x += '.' + note
+        x += '\0'
         self.x = x
+        self.note = note
         self.str_offset = str_offset
         strings += x
         str_offset += len(x)
@@ -28,13 +31,17 @@ class ElfSection:
 
 #elfsections.append(ElfSection('bss', 0x80494880, chr(0) * 0x001108D4, elf_offset))
 
+def pad(st):
+    while len(st) % 0x400 != 0: st += '\0'
+    return st
 
 def writeElf(elfsections, outfile):
     global strings, str_offset
 
-    while len(strings) < 0x400: strings += '\0'
+    strings = pad(strings)
 
-    print [i.x for i in elfsections]
+    for i in elfsections:
+        print i.x, i.note
 
     elfheader = MutableString(chr(0) * 0x400)
     elfheader[0] = chr(0x7f)
@@ -49,28 +56,14 @@ def writeElf(elfsections, outfile):
         stx[place:place+2] = struct.pack('>H', number)
     def write32(stx, place, number):
         stx[place:place+4] = struct.pack('>I', number)
-    write16(elfheader, 0x10, 2)
-    write16(elfheader, 0x12, 0x14)
-    write32(elfheader, 0x14, 1)
-    write32(elfheader, 0x18, 0x80000000) # entrypoint TODO
-    write32(elfheader, 0x1c, 0x400)
-    write32(elfheader, 0x20, 0x800)
-    write32(elfheader, 0x24, 0)
-    write16(elfheader, 0x28, 0x400) # 0x34
-    write16(elfheader, 0x2a, 0x400) # 0x20
-    write16(elfheader, 0x2c, len(elfsections)+2)
-    write16(elfheader, 0x2e, 0x400) # 0x28
-    write16(elfheader, 0x30, len(elfsections)+3) # +2
-    write16(elfheader, 0x32, 1)
+
     
     segheader = ''
-    elf_offset = 0x1000
+    
     for es in elfsections:
-        es.elf_offset = elf_offset
-        elf_offset += es.size
         segheader += struct.pack('>IIIIIIII',
             1,
-            es.elf_offset,
+            0xeeeeeeee,
             es.addr,
             es.addr,
             0 if es.type == 'bss' else es.size,
@@ -78,31 +71,64 @@ def writeElf(elfsections, outfile):
             5 if es.type == 'text' else 6,
             0x20
         )
-    while len(segheader) < 0x400: segheader += chr(0)
-    secheader = MutableString(chr(0) * 0x400)
-    write32(secheader, 0x28 + 0x00, 1)
-    write32(secheader, 0x28 + 0x04, 3)
-    write32(secheader, 0x28 + 0x08, 0)
-    write32(secheader, 0x28 + 0x0c, 0)
-    write32(secheader, 0x28 + 0x10, 0xc00)
-    write32(secheader, 0x28 + 0x14, 0x400)
-    write32(secheader, 0x28 + 0x18, 0)
-    write32(secheader, 0x28 + 0x1c, 0)
-    write32(secheader, 0x28 + 0x20, 1)
-    write32(secheader, 0x28 + 0x24, 0)
-    p = 0x50
+    
+    secheader = '\x00' * 40
+    secheader += struct.pack('>IIIIIIIIII',
+        1,
+        3,
+        0,
+        0,
+        0x99999999,
+        len(strings),
+        0,
+        0,
+        1,
+        0
+    )
+ 
     for es in elfsections:
-        write32(secheader, p + 0x00, es.str_offset)
-        write32(secheader, p + 0x04, 8 if es.type == 'bss' else 1)
-        write32(secheader, p + 0x08, 6 if es.type == 'text' else 3)
-        write32(secheader, p + 0x0c, es.addr)
-        write32(secheader, p + 0x10, es.elf_offset)
-        write32(secheader, p + 0x14, es.size)
-        write32(secheader, p + 0x18, 0)
-        write32(secheader, p + 0x1c, 0)
-        write32(secheader, p + 0x20, 0x20)
-        write32(secheader, p + 0x24, 0)
-        p += 0x28
+        secheader += struct.pack('>IIIIIIIIII',
+            es.str_offset,
+            8 if es.type == 'bss' else 1,
+            6 if es.type == 'text' else 3,
+            es.addr,
+            0xdddddddd,
+            es.size,
+            0,
+            0,
+            0x20,
+            0
+        )
+
+    segheader = pad(segheader)
+    secheader = pad(secheader)
+    
+
+    secheader = secheader[:0x38] + struct.pack('>I', 0x400 + len(secheader) + len(segheader)) + secheader[0x3c:]
+    elf_offset = 0x400 + len(secheader) + len(segheader) + len(strings)
+    for i, es in enumerate(elfsections):
+        offs = 0x4 + 32*i
+        segheader = segheader[:offs] + struct.pack('>I', elf_offset) + segheader[offs+4:]
+        offs2 = 0x60 + 40*i
+        secheader = secheader[:offs2] + struct.pack('>I', elf_offset) + secheader[offs2+4:]
+        es.elf_offset = elf_offset
+        elf_offset += -(-es.size & -0x400)
+    
+    
+    
+    write16(elfheader, 0x10, 2)
+    write16(elfheader, 0x12, 0x14)
+    write32(elfheader, 0x14, 1)
+    write32(elfheader, 0x18, 0x80000000) # entrypoint TODO
+    write32(elfheader, 0x1c, 0x400) # Start of segheader
+    write32(elfheader, 0x20, 0x400 + len(segheader))
+    write32(elfheader, 0x24, 0)
+    write16(elfheader, 0x28, 0x400) # 0x34
+    write16(elfheader, 0x2a, 32) # 0x20
+    write16(elfheader, 0x2c, len(elfsections))
+    write16(elfheader, 0x2e, 40) # 0x28
+    write16(elfheader, 0x30, len(elfsections)+2) # +2
+    write16(elfheader, 0x32, 1)
     
     print 'elfheader: 0x%x\nsegheader: 0x%x\nsecheader: 0x%x\n' % (len(elfheader), len(segheader), len(secheader))
     f = open(outfile, 'wb')
@@ -111,5 +137,5 @@ def writeElf(elfsections, outfile):
     f.write(str(secheader)) # 0xc00
     f.write(strings)        # 0x1000
     for es in elfsections:
-        f.write(es.data)
+        f.write(pad(es.data))
     f.close()

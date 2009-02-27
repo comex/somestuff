@@ -34,7 +34,7 @@ class REL(cstruct):
         self.buf = str(buf)
         return self
     def toSections(self):
-        return [ElfSection(seg.type, self.base + seg.offset, self.buf[seg.offset:seg.offset+seg.length]) for seg in self.segments if seg.length > 0]
+        return [ElfSection(seg.type, self.base + seg.offset, self.buf[seg.offset:seg.offset+seg.length], note='%s:%d' % (self.fn, i)) for i, seg in enumerate(self.segments) if seg.length > 0]
 class Segment(cstruct):
     offset = u32(0)
     length = u32(4)
@@ -154,10 +154,10 @@ def go(ar):
         rel.relocate()
         #print rel
     sections = []
-    for addr, data, _ in dol.text:
-        sections.append(ElfSection('text', addr, data))
-    for addr, data, _ in dol.data:
-        sections.append(ElfSection('data', addr, data))
+    for i, (addr, data, _) in enumerate(dol.text):
+        sections.append(ElfSection('text', addr, data, note='doltext%d' % i))
+    for i, (addr, data, _) in enumerate(dol.data):
+        sections.append(ElfSection('data', addr, data, note='doldata%d' % i))
     for rel in rv:
         sections += rel.toSections()
     writeElf(sections, sys.argv[-1])
