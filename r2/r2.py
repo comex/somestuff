@@ -26,7 +26,7 @@ class REL(cstruct):
         buf = self.buf
         print >> sys.stderr, 'Loading %s' % self.fn
         self.segments = Segment.unpackMany(buf[self.segTableOffset:], self.numSegments)
-        self.imports = Import.unpackMany(buf[self.importTableOffset:], self.importTableSize/Import.size, buf)
+        self.imports = Import.unpackMany(buf[self.importTableOffset:], self.importTableSize/Import.size, self, buf)
     def relocate(self):
         print >> sys.stderr, 'Relocating %s' % self.fn
         buf = MutableString(self.buf)
@@ -50,10 +50,20 @@ class Segment(cstruct):
 class Import(cstruct):
     libID = u32(0)
     relocationTableOffset = u32(4)
-    def unpack(self, buf, gbuf):
+    def unpack(self, buf, rel, gbuf):
         cstruct.unpack(self, buf)
-        self.relocs = Relocation.unpackUntilDone(gbuf[self.relocationTableOffset:], self.libID)
+        self.relocs = Relocation.unpackUntilDone(gbuf[self.relocationTableOffset:], rel, self.libID)
         return self
+
+def lookupSegment(libID, segment):
+    if libID == 0:
+        return 0 # rel is absolute
+    else:
+        rels[libID].load()
+        return rels[libID].base + rels[libID].segments[segment].offset
+
+def lookupFileSegment(rel, segment):
+    return rel.segments[segment].offset
 
 class Relocation(cstruct):
     offsetDelta = u16(0)
@@ -67,15 +77,16 @@ class Relocation(cstruct):
     def unpack(self, buf, oldOffset):
         cstruct.unpack(self, buf)
         self.offset = oldOffset + self.offsetDelta
+        self.offsetNext = oldOffset + self.offsetDelta
         return self
     
     def __repr__(self):
         return '<relocation(%x): %x <-- %x@%x>' % (self.relType, self.offset, self.libID, self.rel)
     @classmethod
-    def unpackUntilDone(cls, buf, *args):
+    def unpackUntilDone(cls, buf, rel, *args):
         global rels
         ret = []
-        offset = 0
+        offset = 0xdeadbeef
         offs = 0
         while True:
             v = cls(*args).unpack(buf[offs:offs+cls.size], offset)
@@ -83,29 +94,26 @@ class Relocation(cstruct):
             if v.relType == 0xcb: # terminator
                 break
             elif v.relType == 0xca: # change segment
-                offset = 0
+                offset = lookupFileSegment(rel, v.segment)
             else:
-                offset = v.offset
+                offset = v.offsetNext
             offs += cls.size
         return ret
     
     def relocate(self, buf, rel):
         global rels
-        if self.libID == 0:
-            source = 0 # rel is absolute
-        else:
-            rels[self.libID].load()
-            source = rels[self.libID].base + rels[self.libID].segments[self.segment].offset
+        source = lookupSegment(self.libID, self.segment)
         source += self.rel
-        assert source == source % 0xffffffff
+        assert source == source % 0x100000000
         offset = self.offset
         typ = self.relType
+        print '%08x <-- %d, %x [rel=%x, libID=%d, seg=%d, do=%x]' % (offset, typ, source, self.rel, self.libID, self.segment, self.offsetDelta)
         if typ == 1: # 32 bits
             buf[offset:offset + 4] = struct.pack('>I', source)
         elif typ == 4:
             buf[offset:offset + 2] = struct.pack('>H', source & 0xffff)
         elif typ == 6:
-            buf[offset:offset + 2] = struct.pack('>H', (source >> 16) & 0xffff)
+            buf[offset:offset + 2] = struct.pack('>H', ((source >> 16) & 0xffff) + (1 if source & 0x8000 else 0))
         elif typ == 0xa:
             # Oh, this sucks
             ptr = rel.base + offset
@@ -117,12 +125,13 @@ class Relocation(cstruct):
                 print len(buf[offset:offset+4])
                 die
             #print self.libID, hex(self.rel), hex(source), hex(ptr)
-            a = struct.pack('>I', (((source - ptr) % 0xffffffff) & 0x3fffffc ) | (struct.unpack('>I', orig)[0] & 0xfc000003))
+            a = struct.pack('>I', (((source - ptr) % 0x100000000) & 0x3fffffc ) | (struct.unpack('>I', orig)[0] & 0xfc000003))
             buf[offset:offset + 4] = a
         elif typ == 0xca or typ == 0xcb or typ == 0xc9:
             pass
         else:
             print >> sys.stderr, '(Unsupported type %d)' % typ
+            die
         sys.stderr.write('.')
         
         
@@ -147,17 +156,18 @@ def go(ar):
 
     rv = rels.values()
     
-    #rv = [rv[0]]
+    #rv = filter(lambda x: 'sora_menu_title.rel' in x.fn, rv) # ZZ
     for rel in rv:
         rel.load()
     for rel in rv:
         rel.relocate()
         #print rel
     sections = []
-    for i, (addr, data, _) in enumerate(dol.text):
-        sections.append(ElfSection('text', addr, data, note='doltext%d' % i))
-    for i, (addr, data, _) in enumerate(dol.data):
-        sections.append(ElfSection('data', addr, data, note='doldata%d' % i))
+    if True: # add/include dol sections?
+        for i, (addr, data, _) in enumerate(dol.text):
+            sections.append(ElfSection('text', addr, data, note='doltext%d' % i))
+        for i, (addr, data, _) in enumerate(dol.data):
+            sections.append(ElfSection('data', addr, data, note='doldata%d' % i))
     for rel in rv:
         sections += rel.toSections()
     writeElf(sections, sys.argv[-1])
