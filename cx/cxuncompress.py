@@ -16,7 +16,12 @@ g.write('''
 #include <stdio.h>
 #include <stdlib.h>
 #include <malloc.h>
-int main() {
+int main(int argc, char **argv) {
+    if(argc != 2) {
+        printf("Must have one argument\\n");
+        return 1;
+    }
+    int outsize = atoi(argv[1]);
     char *x = "%s";
     char *input, *output;
     int len = 1024;
@@ -24,7 +29,7 @@ int main() {
     char *ptr = input;
     int c;
     while((c = getchar()) != EOF) {
-        printf("read\\n");
+        //printf("read\\n");
         *ptr++ = (char) c;
         if((ptr - input) >= len) {
             len *= 2;
@@ -32,9 +37,9 @@ int main() {
         }
     }
     output = malloc(1048576);
-    printf("ok\\n");
-    ((void(*)(char*, char*)) x)(input, output);
-    printf("%%s\\n", output);
+    //printf("ok\\n");
+    ((void(*)(char*, char*)) x)(input + 4, output);
+    fwrite(output, 1, outsize, stdout);
 }
 ''' % st2)
 
